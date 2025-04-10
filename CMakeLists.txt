@@ -4,7 +4,8 @@
 #   Original authors — credit is appreciated but not required:
 #
 #       2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-#       2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+#       2020, 2021, 2022, 2023, 2024, 2025
+#            — Vladimír Vondruš <mosra@centrum.cz>
 #
 #   This is free and unencumbered software released into the public domain.
 #
@@ -28,7 +29,14 @@
 #
 
 # Matches Corrade requirement, see its root CMakeLists for more information.
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.5...3.10)
+
+# CMake 3.12+ uses the policy max version specified in
+# cmake_minimum_required(), meaning that with ...3.10, everything until CMP0071
+# gets set to NEW implicitly. We however want to keep compatibility with
+# versions before 3.12, so the NEW policies are still being hand-picked. Also
+# don't want to do a blanket cmake_policy(VERSION) because that may break
+# behavior for existing projects that rely on the OLD behavior.
 
 # Don't restrict INTERPROCEDURAL_OPTIMIZATION only for icc on Linux
 if(POLICY CMP0069)
@@ -220,6 +228,12 @@ if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NOT DEFINED CMAKE_LIBRARY_OUTP
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/bin CACHE PATH "" FORCE)
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/lib CACHE PATH "" FORCE)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/$<CONFIG>/lib CACHE PATH "" FORCE)
+    # There should be no need for the "90% use case" user to adjust these, so
+    # don't show them in the default view
+    mark_as_advanced(
+        CMAKE_RUNTIME_OUTPUT_DIRECTORY
+        CMAKE_LIBRARY_OUTPUT_DIRECTORY
+        CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
 endif()
 
 add_subdirectory(src)

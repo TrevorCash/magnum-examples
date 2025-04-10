@@ -3,33 +3,19 @@ set -ev
 
 git submodule update --init
 
+# Crosscompile Corrade
 git clone --depth 1 https://github.com/mosra/corrade.git
 cd corrade
-
-# Build native corrade-rc
-mkdir build && cd build || exit /b
-cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=$HOME/deps-native \
-    -DCORRADE_WITH_INTERCONNECT=OFF \
-    -DCORRADE_WITH_PLUGINMANAGER=OFF \
-    -DCORRADE_WITH_TESTSUITE=OFF \
-    -DCORRADE_WITH_UTILITY=OFF \
-    -G Ninja
-ninja install
-cd ..
-
-# Crosscompile Corrade
 mkdir build-emscripten && cd build-emscripten
 cmake .. \
-    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten-wasm.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
     -DCMAKE_INSTALL_PREFIX=$HOME/deps \
-    -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DCORRADE_WITH_INTERCONNECT=OFF \
     -DCORRADE_WITH_TESTSUITE=OFF \
+    $EXTRA_OPTS \
     -G Ninja
 ninja install
 cd ../..
@@ -39,13 +25,12 @@ git clone --depth 1 https://github.com/mosra/magnum.git
 cd magnum
 mkdir build-emscripten && cd build-emscripten
 cmake .. \
-    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten-wasm.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
     -DCMAKE_INSTALL_PREFIX=$HOME/deps \
     -DCMAKE_FIND_ROOT_PATH=$HOME/deps \
-    -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DMAGNUM_WITH_AUDIO=OFF \
     -DMAGNUM_WITH_DEBUGTOOLS=ON \
     -DMAGNUM_WITH_MATERIALTOOLS=OFF \
@@ -60,6 +45,7 @@ cmake .. \
     -DMAGNUM_WITH_TRADE=ON \
     -DMAGNUM_WITH_EMSCRIPTENAPPLICATION=ON \
     -DMAGNUM_TARGET_GLES2=$TARGET_GLES2 \
+    $EXTRA_OPTS \
     -G Ninja
 ninja install
 cd ../..
@@ -69,18 +55,18 @@ git clone --depth 1 https://github.com/mosra/magnum-integration.git
 cd magnum-integration
 mkdir build-emscripten && cd build-emscripten
 cmake .. \
-    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten-wasm.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
     -DCMAKE_INSTALL_PREFIX=$HOME/deps \
     -DCMAKE_FIND_ROOT_PATH=$HOME/deps \
     -DIMGUI_DIR=$HOME/imgui \
-    -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DMAGNUM_WITH_BULLET=OFF \
     -DMAGNUM_WITH_DART=OFF \
     -DMAGNUM_WITH_IMGUI=ON \
     -DMAGNUM_WITH_OVR=OFF \
+    $EXTRA_OPTS \
     -G Ninja
 ninja install
 cd ../..
@@ -90,14 +76,14 @@ git clone --depth 1 https://github.com/mosra/magnum-extras.git
 cd magnum-extras
 mkdir build-emscripten && cd build-emscripten
 cmake .. \
-    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="../../toolchains/generic/Emscripten-wasm.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
     -DCMAKE_INSTALL_PREFIX=$HOME/deps \
     -DCMAKE_FIND_ROOT_PATH=$HOME/deps \
-    -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DMAGNUM_WITH_UI=OFF \
+    $EXTRA_OPTS \
     -G Ninja
 ninja install
 cd ../..
@@ -105,14 +91,13 @@ cd ../..
 # Crosscompile
 mkdir build-emscripten && cd build-emscripten
 cmake .. \
-    -DCMAKE_TOOLCHAIN_FILE="../toolchains/generic/Emscripten.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="../toolchains/generic/Emscripten-wasm.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS_RELEASE="-DNDEBUG -O1" \
     -DCMAKE_EXE_LINKER_FLAGS_RELEASE="-O1" \
     -DCMAKE_INSTALL_PREFIX=$HOME/deps \
     -DCMAKE_FIND_ROOT_PATH=$HOME/deps \
     -DIMGUI_DIR=$HOME/imgui \
-    -DCORRADE_RC_EXECUTABLE=$HOME/deps-native/bin/corrade-rc \
     -DMAGNUM_WITH_ANIMATED_GIF_EXAMPLE=OFF \
     -DMAGNUM_WITH_ARCBALL_EXAMPLE=OFF \
     -DMAGNUM_WITH_AREALIGHTS_EXAMPLE=OFF \
@@ -139,6 +124,7 @@ cmake .. \
     -DMAGNUM_WITH_TRIANGLE_SOKOL_EXAMPLE=OFF \
     -DMAGNUM_WITH_VIEWER_EXAMPLE=OFF \
     -DMAGNUM_WITH_WEBXR_EXAMPLE=ON \
+    $EXTRA_OPTS \
     -G Ninja
 ninja $NINJA_JOBS
 

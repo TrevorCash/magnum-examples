@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
         2017 — Jonathan Hale <squareys@googlemail.com>, based on "Real-Time
             Polygonal-Light Shading with Linearly Transformed Cosines", by Eric
             Heitz et al, https://eheitzresearch.wordpress.com/415-2/
@@ -30,8 +31,8 @@
     CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-layout(location = 0) in vec4 position;
-layout(location = 2) in vec3 normal;
+layout(location = POSITION_ATTRIBUTE_LOCATION) in vec4 position;
+layout(location = NORMAL_ATTRIBUTE_LOCATION) in vec3 normal;
 
 out vec4 v_position;
 out vec3 v_normal;

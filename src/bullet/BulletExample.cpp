@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
         2013 — Jan Dupal <dupal.j@gmail.com>
         2019 — Max Schwarz <max.schwarz@online.de>
 
@@ -42,6 +43,7 @@
 #include <Magnum/GL/Renderer.h>
 #include <Magnum/Math/Constants.h>
 #include <Magnum/Math/Color.h>
+#include <Magnum/Math/Time.h>
 #include <Magnum/MeshTools/Compile.h>
 #include <Magnum/MeshTools/Transform.h>
 #include <Magnum/Platform/Sdl2Application.h>
@@ -78,7 +80,7 @@ class BulletExample: public Platform::Application {
     private:
         void drawEvent() override;
         void keyPressEvent(KeyEvent& event) override;
-        void mousePressEvent(MouseEvent& event) override;
+        void pointerPressEvent(PointerEvent& event) override;
 
         GL::Mesh _box{NoCreate}, _sphere{NoCreate};
         GL::Buffer _boxInstanceBuffer{NoCreate}, _sphereInstanceBuffer{NoCreate};
@@ -239,7 +241,7 @@ BulletExample::BulletExample(const Arguments& arguments): Platform::Application(
 
     /* Loop at 60 Hz max */
     setSwapInterval(1);
-    setMinimalLoopPeriod(16);
+    setMinimalLoopPeriod(16.0_msec);
     _timeline.start();
 }
 
@@ -300,17 +302,17 @@ void BulletExample::drawEvent() {
 
 void BulletExample::keyPressEvent(KeyEvent& event) {
     /* Movement */
-    if(event.key() == KeyEvent::Key::Down) {
+    if(event.key() == Key::Down) {
         _cameraObject->rotateX(5.0_degf);
-    } else if(event.key() == KeyEvent::Key::Up) {
+    } else if(event.key() == Key::Up) {
         _cameraObject->rotateX(-5.0_degf);
-    } else if(event.key() == KeyEvent::Key::Left) {
+    } else if(event.key() == Key::Left) {
         _cameraRig->rotateY(-5.0_degf);
-    } else if(event.key() == KeyEvent::Key::Right) {
+    } else if(event.key() == Key::Right) {
         _cameraRig->rotateY(5.0_degf);
 
     /* Toggling draw modes */
-    } else if(event.key() == KeyEvent::Key::D) {
+    } else if(event.key() == Key::D) {
         if(_drawCubes && _drawDebug) {
             _drawDebug = false;
         } else if(_drawCubes && !_drawDebug) {
@@ -322,44 +324,46 @@ void BulletExample::keyPressEvent(KeyEvent& event) {
         }
 
     /* What to shoot */
-    } else if(event.key() == KeyEvent::Key::S) {
+    } else if(event.key() == Key::S) {
         _shootBox ^= true;
     } else return;
 
     event.setAccepted();
 }
 
-void BulletExample::mousePressEvent(MouseEvent& event) {
+void BulletExample::pointerPressEvent(PointerEvent& event) {
     /* Shoot an object on click */
-    if(event.button() == MouseEvent::Button::Left) {
-        /* First scale the position from being relative to window size to being
-           relative to framebuffer size as those two can be different on HiDPI
-           systems */
-        const Vector2i position = event.position()*Vector2{framebufferSize()}/Vector2{windowSize()};
-        const Vector2 clickPoint = Vector2::yScale(-1.0f)*(Vector2{position}/Vector2{framebufferSize()} - Vector2{0.5f})*_camera->projectionSize();
-        const Vector3 direction = (_cameraObject->absoluteTransformation().rotationScaling()*Vector3{clickPoint, -1.0f}).normalized();
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 
-        auto* object = new RigidBody{
-            &_scene,
-            _shootBox ? 1.0f : 5.0f,
-            _shootBox ? static_cast<btCollisionShape*>(&_bBoxShape) : &_bSphereShape,
-            _bWorld};
-        object->translate(_cameraObject->absoluteTransformation().translation());
-        /* Has to be done explicitly after the translate() above, as Magnum ->
-           Bullet updates are implicitly done only for kinematic bodies */
-        object->syncPose();
+    /* First scale the position from being relative to window size to being
+       relative to framebuffer size as those two can be different on HiDPI
+       systems */
+    const Vector2 position = event.position()*Vector2{framebufferSize()}/Vector2{windowSize()};
+    const Vector2 clickPoint = Vector2::yScale(-1.0f)*(position/Vector2{framebufferSize()} - Vector2{0.5f})*_camera->projectionSize();
+    const Vector3 direction = (_cameraObject->absoluteTransformation().rotationScaling()*Vector3{clickPoint, -1.0f}).normalized();
 
-        /* Create either a box or a sphere */
-        new ColoredDrawable{*object,
-            _shootBox ? _boxInstanceData : _sphereInstanceData,
-            _shootBox ? 0x880000_rgbf : 0x220000_rgbf,
-            Matrix4::scaling(Vector3{_shootBox ? 0.5f : 0.25f}), _drawables};
+    auto* object = new RigidBody{
+        &_scene,
+        _shootBox ? 1.0f : 5.0f,
+        _shootBox ? static_cast<btCollisionShape*>(&_bBoxShape) : &_bSphereShape,
+        _bWorld};
+    object->translate(_cameraObject->absoluteTransformation().translation());
+    /* Has to be done explicitly after the translate() above, as Magnum ->
+       Bullet updates are implicitly done only for kinematic bodies */
+    object->syncPose();
 
-        /* Give it an initial velocity */
-        object->rigidBody().setLinearVelocity(btVector3{direction*25.f});
+    /* Create either a box or a sphere */
+    new ColoredDrawable{*object,
+        _shootBox ? _boxInstanceData : _sphereInstanceData,
+        _shootBox ? 0x880000_rgbf : 0x220000_rgbf,
+        Matrix4::scaling(Vector3{_shootBox ? 0.5f : 0.25f}), _drawables};
 
-        event.setAccepted();
-    }
+    /* Give it an initial velocity */
+    object->rigidBody().setLinearVelocity(btVector3{direction*25.f});
+
+    event.setAccepted();
 }
 
 }}

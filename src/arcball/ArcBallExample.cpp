@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
         2020 — Nghia Truong <nghiatruong.vn@gmail.com>
 
     This is free and unencumbered software released into the public domain.
@@ -39,6 +40,7 @@
 #include <Magnum/GL/TextureFormat.h>
 #include <Magnum/Math/Color.h>
 #include <Magnum/Math/Matrix4.h>
+#include <Magnum/Math/Time.h>
 #include <Magnum/MeshTools/Compile.h>
 #include <Magnum/Platform/Sdl2Application.h>
 #include <Magnum/Primitives/Cube.h>
@@ -68,10 +70,10 @@ class ArcBallExample: public Platform::Application {
         void drawEvent() override;
         void viewportEvent(ViewportEvent& event) override;
         void keyPressEvent(KeyEvent& event) override;
-        void mousePressEvent(MouseEvent& event) override;
-        void mouseReleaseEvent(MouseEvent& event) override;
-        void mouseMoveEvent(MouseMoveEvent& event) override;
-        void mouseScrollEvent(MouseScrollEvent& event) override;
+        void pointerPressEvent(PointerEvent& event) override;
+        void pointerReleaseEvent(PointerEvent& event) override;
+        void pointerMoveEvent(PointerMoveEvent& event) override;
+        void scrollEvent(ScrollEvent& event) override;
 
         Scene3D _scene;
         SceneGraph::DrawableGroup3D _drawables;
@@ -169,7 +171,7 @@ ArcBallExample::ArcBallExample(const Arguments& arguments) :
 
     /* Loop at 60 Hz max */
     setSwapInterval(1);
-    setMinimalLoopPeriod(16);
+    setMinimalLoopPeriod(16.0_msec);
 }
 
 void ArcBallExample::drawEvent() {
@@ -195,7 +197,7 @@ void ArcBallExample::viewportEvent(ViewportEvent& event) {
 
 void ArcBallExample::keyPressEvent(KeyEvent& event) {
     switch(event.key()) {
-        case KeyEvent::Key::L:
+        case Key::L:
             if(_arcballCamera->lagging() > 0.0f) {
                 Debug{} << "Lagging disabled";
                 _arcballCamera->setLagging(0.0f);
@@ -204,7 +206,7 @@ void ArcBallExample::keyPressEvent(KeyEvent& event) {
                 _arcballCamera->setLagging(0.85f);
             }
             break;
-        case KeyEvent::Key::R:
+        case Key::R:
             _arcballCamera->reset();
             break;
 
@@ -215,7 +217,11 @@ void ArcBallExample::keyPressEvent(KeyEvent& event) {
     redraw(); /* camera has changed, redraw! */
 }
 
-void ArcBallExample::mousePressEvent(MouseEvent& event) {
+void ArcBallExample::pointerPressEvent(PointerEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
+
     /* Enable mouse capture so the mouse can drag outside of the window */
     /** @todo replace once https://github.com/mosra/magnum/pull/419 is in */
     SDL_CaptureMouse(SDL_TRUE);
@@ -226,16 +232,22 @@ void ArcBallExample::mousePressEvent(MouseEvent& event) {
     redraw(); /* camera has changed, redraw! */
 }
 
-void ArcBallExample::mouseReleaseEvent(MouseEvent&) {
+void ArcBallExample::pointerReleaseEvent(PointerEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
+
     /* Disable mouse capture again */
     /** @todo replace once https://github.com/mosra/magnum/pull/419 is in */
     SDL_CaptureMouse(SDL_FALSE);
 }
 
-void ArcBallExample::mouseMoveEvent(MouseMoveEvent& event) {
-    if(!event.buttons()) return;
+void ArcBallExample::pointerMoveEvent(PointerMoveEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointers() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 
-    if(event.modifiers() & MouseMoveEvent::Modifier::Shift)
+    if(event.modifiers() & Modifier::Shift)
         _arcballCamera->translate(event.position());
     else _arcballCamera->rotate(event.position());
 
@@ -243,7 +255,7 @@ void ArcBallExample::mouseMoveEvent(MouseMoveEvent& event) {
     redraw(); /* camera has changed, redraw! */
 }
 
-void ArcBallExample::mouseScrollEvent(MouseScrollEvent& event) {
+void ArcBallExample::scrollEvent(ScrollEvent& event) {
     const Float delta = event.offset().y();
     if(Math::abs(delta) < 1.0e-2f) return;
 

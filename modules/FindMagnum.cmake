@@ -135,9 +135,9 @@
 #   globals unique even across different shared libraries
 #  MAGNUM_TARGET_GL             - Defined if compiled with OpenGL interop
 #  MAGNUM_TARGET_GLES           - Defined if compiled for OpenGL ES
-#  MAGNUM_TARGET_GLES2          - Defined if compiled for OpenGL ES 2.0
-#  MAGNUM_TARGET_GLES3          - Defined if compiled for OpenGL ES 3.0
 #  MAGNUM_TARGET_WEBGL          - Defined if compiled for WebGL
+#  MAGNUM_TARGET_GLES2          - Defined if compiled for OpenGL ES 2.0 / WebGL
+#   1 instead of OpenGL ES 3.0+ / WebGL 2
 #  MAGNUM_TARGET_EGL            - Defined if compiled for EGL instead of a
 #   platform-specific OpenGL support library like CGL, EAGL, GLX or WGL
 #  MAGNUM_TARGET_VK             - Defined if compiled with Vulkan interop
@@ -152,6 +152,8 @@
 #   Android, Emscripten or Windows RT. Use MAGNUM_TARGET_EGL instead.
 #  MAGNUM_TARGET_DESKTOP_GLES`  - Defined if compiled for OpenGL ES but
 #   GLX / WGL is used instead of EGL. Use MAGNUM_TARGET_EGL instead.
+#  MAGNUM_TARGET_GLES3          - Defined if compiled for OpenGL ES 3.0+ /
+#   WebGL 2. Use an inverse of the MAGNUM_TARGET_GLES2 variable instead.
 #
 # Additionally these variables are defined for internal usage:
 #
@@ -162,6 +164,7 @@
 #  MAGNUM_*_LIBRARY             - Component libraries (w/o dependencies)
 #  MAGNUM_*_LIBRARY_DEBUG       - Debug version of given library, if found
 #  MAGNUM_*_LIBRARY_RELEASE     - Release version of given library, if found
+#  MAGNUM_PLATFORM_JS           - Path to MagnumPlatform.js file
 #  MAGNUM_BINARY_INSTALL_DIR    - Binary installation directory
 #  MAGNUM_LIBRARY_INSTALL_DIR   - Library installation directory
 #  MAGNUM_DATA_INSTALL_DIR      - Data installation directory
@@ -205,7 +208,8 @@
 #   This file is part of Magnum.
 #
 #   Copyright © 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-#               2020, 2021, 2022, 2023 Vladimír Vondruš <mosra@centrum.cz>
+#               2020, 2021, 2022, 2023, 2024, 2025
+#             Vladimír Vondruš <mosra@centrum.cz>
 #
 #   Permission is hereby granted, free of charge, to any person obtaining a
 #   copy of this software and associated documentation files (the "Software"),
@@ -225,6 +229,15 @@
 #   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 #   DEALINGS IN THE SOFTWARE.
 #
+
+# CMake policies used by FindMagnum are popped again at the end.
+cmake_policy(PUSH)
+# Prefer GLVND when finding OpenGL. If this causes problems (known to fail with
+# NVidia drivers in Debian Buster, reported on 2019-04-09), users can override
+# this by setting OpenGL_GL_PREFERENCE to LEGACY.
+if(POLICY CMP0072)
+    cmake_policy(SET CMP0072 NEW)
+endif()
 
 # Corrade library dependencies
 set(_MAGNUM_CORRADE_DEPENDENCIES )
@@ -281,7 +294,6 @@ set(_magnumFlags
     TARGET_GL
     TARGET_GLES
     TARGET_GLES2
-    TARGET_GLES3
     TARGET_WEBGL
     TARGET_EGL
     TARGET_VK)
@@ -306,14 +318,33 @@ if(MAGNUM_BUILD_DEPRECATED)
             set(MAGNUM_TARGET_DESKTOP_GLES 1)
         endif()
     endif()
+    if(MAGNUM_TARGET_GLES AND NOT MAGNUM_TARGET_GLES2)
+        set(MAGNUM_TARGET_GLES3 1)
+    endif()
 endif()
 
-# OpenGL library preference. Prefer to use GLVND, since that's the better
-# approach nowadays, but allow the users to override it from outside in case
-# it is broken for some reason (Nvidia drivers in Debian's testing (Buster) --
-# reported on 2019-04-09).
-if(NOT CMAKE_VERSION VERSION_LESS 3.10 AND NOT OpenGL_GL_PREFERENCE)
-    set(OpenGL_GL_PREFERENCE GLVND)
+# CMake module dir for dependencies. It might not be present at all if no
+# feature that needs them is enabled, in which case it'll be left at NOTFOUND.
+# But in that case it should also not be subsequently needed for any
+# find_package(). If this is called from a superproject, the
+# _MAGNUM_DEPENDENCY_MODULE_DIR is already set by modules/CMakeLists.txt.
+find_path(_MAGNUM_DEPENDENCY_MODULE_DIR
+    NAMES
+        FindEGL.cmake FindGLFW.cmake FindOpenAL.cmake FindOpenGLES2.cmake
+        FindOpenGLES3.cmake FindSDL2.cmake FindVulkan.cmake
+    PATH_SUFFIXES share/cmake/Magnum/dependencies)
+mark_as_advanced(_MAGNUM_DEPENDENCY_MODULE_DIR)
+
+# If the module dir is found and is not present in CMAKE_MODULE_PATH already
+# (such as when someone explicitly added it, or if it's the Magnum's modules/
+# dir in case of a superproject), add it as the first before all other. Set a
+# flag to remove it again at the end, so the modules don't clash with Find
+# modules of the same name from other projects.
+if(_MAGNUM_DEPENDENCY_MODULE_DIR AND NOT _MAGNUM_DEPENDENCY_MODULE_DIR IN_LIST CMAKE_MODULE_PATH)
+    set(CMAKE_MODULE_PATH ${_MAGNUM_DEPENDENCY_MODULE_DIR} ${CMAKE_MODULE_PATH})
+    set(_MAGNUM_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH ON)
+else()
+    unset(_MAGNUM_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH)
 endif()
 
 # Base Magnum library
@@ -381,6 +412,10 @@ set(_MAGNUM_LIBRARY_COMPONENTS
     Audio DebugTools GL MaterialTools MeshTools Primitives SceneGraph
     SceneTools Shaders ShaderTools Text TextureTools Trade
     WindowlessEglApplication EglContext OpenGLTester)
+# These libraries are excluded from DLL detection if Magnum is built as shared.
+# Additionally, all *Application and *Context libraries are excluded as well.
+set(_MAGNUM_LIBRARY_COMPONENTS_ALWAYS_STATIC
+    OpenGLTester)
 set(_MAGNUM_PLUGIN_COMPONENTS
     AnyAudioImporter AnyImageConverter AnyImageImporter AnySceneConverter
     AnySceneImporter MagnumFont MagnumFontConverter ObjImporter
@@ -395,6 +430,7 @@ set(_MAGNUM_IMPLICITLY_ENABLED_COMPONENTS
     GL Primitives)
 if(NOT CORRADE_TARGET_EMSCRIPTEN)
     list(APPEND _MAGNUM_LIBRARY_COMPONENTS Vk VulkanTester)
+    list(APPEND _MAGNUM_LIBRARY_COMPONENTS_ALWAYS_STATIC VulkanTester)
     list(APPEND _MAGNUM_EXECUTABLE_COMPONENTS vk-info)
 endif()
 if(NOT CORRADE_TARGET_ANDROID)
@@ -556,6 +592,15 @@ if(Magnum_FIND_COMPONENTS)
     list(REMOVE_DUPLICATES Magnum_FIND_COMPONENTS)
 endif()
 
+# Special cases of include paths. Libraries not listed here have a path suffix
+# and include name derived from the library name in the loop below.
+set(_MAGNUM_MATERIALTOOLS_INCLUDE_PATH_NAMES PhongToPbrMetallicRoughness.h)
+set(_MAGNUM_MESHTOOLS_INCLUDE_PATH_NAMES CompressIndices.h)
+set(_MAGNUM_OPENGLTESTER_INCLUDE_PATH_SUFFIX Magnum/GL)
+set(_MAGNUM_VULKANTESTER_INCLUDE_PATH_SUFFIX Magnum/Vk)
+set(_MAGNUM_PRIMITIVES_INCLUDE_PATH_NAMES Cube.h)
+set(_MAGNUM_SCENETOOLS_INCLUDE_PATH_NAMES Hierarchy.h)
+
 # Find all components. Maintain a list of components that'll need to have
 # their optional dependencies checked.
 set(_MAGNUM_OPTIONAL_DEPENDENCIES_TO_ADD )
@@ -565,16 +610,25 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
     # Create imported target in case the library is found. If the project is
     # added as subproject to CMake, the target already exists and all the
     # required setup is already done from the build tree.
-    if(TARGET Magnum::${_component})
+    if(TARGET "Magnum::${_component}") # Quotes to "fix" KDE's higlighter
         set(Magnum_${_component}_FOUND TRUE)
     else()
         # Library components
         if(_component IN_LIST _MAGNUM_LIBRARY_COMPONENTS)
-            add_library(Magnum::${_component} UNKNOWN IMPORTED)
-
-            # Set library defaults, find the library
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/${_component})
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES ${_component}.h)
+            # Include path names to find, unless specified above already.
+            # Application and context libraries are a special case as well.
+            if(_component MATCHES ".+Application")
+                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/Platform)
+            elseif(_component MATCHES ".+Context")
+                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/Platform)
+                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES GLContext.h)
+            endif()
+            if(NOT _MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX)
+                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/${_component})
+            endif()
+            if(NOT _MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES)
+                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES ${_component}.h)
+            endif()
 
             # Try to find both debug and release version
             find_library(MAGNUM_${_COMPONENT}_LIBRARY_DEBUG Magnum${_component}-d)
@@ -582,10 +636,24 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
             mark_as_advanced(MAGNUM_${_COMPONENT}_LIBRARY_DEBUG
                 MAGNUM_${_COMPONENT}_LIBRARY_RELEASE)
 
+            # On Windows, if we have a dynamic build of given library, find the
+            # DLLs as well. Abuse find_program() since the DLLs should be
+            # alongside usual executables. On MinGW they however have a lib
+            # prefix.
+            if(CORRADE_TARGET_WINDOWS AND NOT MAGNUM_BUILD_STATIC AND NOT _component IN_LIST _MAGNUM_LIBRARY_COMPONENTS_ALWAYS_STATIC AND NOT _component MATCHES ".+Application" AND NOT _component MATCHES ".+Context")
+                find_program(MAGNUM_${_COMPONENT}_DLL_DEBUG ${CMAKE_SHARED_LIBRARY_PREFIX}Magnum${_component}-d.dll)
+                find_program(MAGNUM_${_COMPONENT}_DLL_RELEASE ${CMAKE_SHARED_LIBRARY_PREFIX}Magnum${_component}.dll)
+                mark_as_advanced(MAGNUM_${_COMPONENT}_DLL_DEBUG
+                    MAGNUM_${_COMPONENT}_DLL_RELEASE)
+            # If not on Windows or on a static build, unset the DLL variables
+            # to avoid leaks when switching shared and static builds
+            else()
+                unset(MAGNUM_${_COMPONENT}_DLL_DEBUG CACHE)
+                unset(MAGNUM_${_COMPONENT}_DLL_RELEASE CACHE)
+            endif()
+
         # Plugin components
         elseif(_component IN_LIST _MAGNUM_PLUGIN_COMPONENTS)
-            add_library(Magnum::${_component} UNKNOWN IMPORTED)
-
             # AudioImporter plugin specific name suffixes
             if(_component MATCHES ".+AudioImporter$")
                 set(_MAGNUM_${_COMPONENT}_PATH_SUFFIX audioimporters)
@@ -593,7 +661,9 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
                 # Audio importer class is Audio::*Importer, thus we need to
                 # convert *AudioImporter.h to *Importer.h
                 string(REPLACE "AudioImporter" "Importer" _MAGNUM_${_COMPONENT}_HEADER_NAME "${_component}")
-                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES ${_MAGNUM_${_COMPONENT}_HEADER_NAME}.h)
+                if(NOT _MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES)
+                    set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES ${_MAGNUM_${_COMPONENT}_HEADER_NAME}.h)
+                endif()
 
             # ShaderConverter plugin specific name suffixes
             elseif(_component MATCHES ".+ShaderConverter$")
@@ -620,8 +690,10 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
                 set(_MAGNUM_${_COMPONENT}_PATH_SUFFIX fontconverters)
             endif()
 
-            # Don't override the exception for *AudioImporter plugins
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX MagnumPlugins/${_component})
+            # Include path names to find, unless specified above
+            if(NOT _MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX)
+                set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX MagnumPlugins/${_component})
+            endif()
             if(NOT _MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES)
                 set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES ${_component}.h)
             endif()
@@ -654,49 +726,146 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
 
         # Executables
         elseif(_component IN_LIST _MAGNUM_EXECUTABLE_COMPONENTS)
-            add_executable(Magnum::${_component} IMPORTED)
-
             find_program(MAGNUM_${_COMPONENT}_EXECUTABLE magnum-${_component})
             mark_as_advanced(MAGNUM_${_COMPONENT}_EXECUTABLE)
-
-            if(MAGNUM_${_COMPONENT}_EXECUTABLE)
-                set_property(TARGET Magnum::${_component} PROPERTY
-                    IMPORTED_LOCATION ${MAGNUM_${_COMPONENT}_EXECUTABLE})
-            endif()
 
         # Something unknown, skip. FPHSA will take care of handling this below.
         else()
             continue()
         endif()
 
-        # Library location for libraries/plugins
+        # Find library/plugin includes
         if(_component IN_LIST _MAGNUM_LIBRARY_COMPONENTS OR _component IN_LIST _MAGNUM_PLUGIN_COMPONENTS)
-            if(MAGNUM_${_COMPONENT}_LIBRARY_RELEASE)
-                set_property(TARGET Magnum::${_component} APPEND PROPERTY
-                    IMPORTED_CONFIGURATIONS RELEASE)
-                set_property(TARGET Magnum::${_component} PROPERTY
-                    IMPORTED_LOCATION_RELEASE ${MAGNUM_${_COMPONENT}_LIBRARY_RELEASE})
+            find_path(_MAGNUM_${_COMPONENT}_INCLUDE_DIR
+                NAMES ${_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES}
+                HINTS ${MAGNUM_INCLUDE_DIR}/${_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX})
+            mark_as_advanced(_MAGNUM_${_COMPONENT}_INCLUDE_DIR)
+        endif()
+
+        # Determine if the plugin is static or dynamic by reading the
+        # per-plugin config file. Plugins use this for automatic import if
+        # static.
+        # TODO: add per-library configure.h as well, for consistency with
+        #   extras, plugins and integration
+        if(_component IN_LIST _MAGNUM_PLUGIN_COMPONENTS)
+            find_file(_MAGNUM_${_COMPONENT}_CONFIGURE_FILE configure.h
+                HINTS ${_MAGNUM_${_COMPONENT}_INCLUDE_DIR})
+            mark_as_advanced(_MAGNUM_${_COMPONENT}_CONFIGURE_FILE)
+
+            # If the file wasn't found, skip this so it fails on the FPHSA
+            # below and not right here.
+            if(_MAGNUM_${_COMPONENT}_CONFIGURE_FILE)
+                file(READ ${_MAGNUM_${_COMPONENT}_CONFIGURE_FILE} _magnumPluginConfigure)
+                string(REGEX REPLACE ";" "\\\\;" _magnumPluginConfigure "${_magnumPluginConfigure}")
+                string(REGEX REPLACE "\n" ";" _magnumPluginConfigure "${_magnumPluginConfigure}")
+                list(FIND _magnumPluginConfigure "#define MAGNUM_${_COMPONENT}_BUILD_STATIC" _magnumPluginBuildStatic)
+                if(NOT _magnumPluginBuildStatic EQUAL -1)
+                    # The variable is inconsistently named between C++ and
+                    # CMake in extras, plugins and integration, keep it
+                    # underscored / private until that's resolved
+                    set(_MAGNUM_${_COMPONENT}_BUILD_STATIC ON)
+                endif()
+            endif()
+        endif()
+
+        # Decide if the library was found. If not, skip the rest, which
+        # populates the target properties and finds additional dependencies.
+        # This means that the rest can also rely on that e.g. FindEGL.cmake is
+        # present in _MAGNUM_DEPENDENCY_MODULE_DIR -- given that the library
+        # needing EGL was found, it likely also installed FindEGL for itself.
+        if(
+            # If the component is a library, it should have the include dir
+           ((_component IN_LIST _MAGNUM_LIBRARY_COMPONENTS OR _component IN_LIST _MAGNUM_PLUGIN_COMPONENTS) AND _MAGNUM_${_COMPONENT}_INCLUDE_DIR AND (
+                # And it should have a debug library, and a DLL found if
+                # expected
+                (MAGNUM_${_COMPONENT}_LIBRARY_DEBUG AND (
+                    NOT DEFINED MAGNUM_${_COMPONENT}_DLL_DEBUG OR
+                    MAGNUM_${_COMPONENT}_DLL_DEBUG)) OR
+                # Or have a release library, and a DLL found if expected
+                (MAGNUM_${_COMPONENT}_LIBRARY_RELEASE AND (
+                    NOT DEFINED MAGNUM_${_COMPONENT}_DLL_RELEASE OR
+                    MAGNUM_${_COMPONENT}_DLL_RELEASE)))) OR
+            # If the component is an executable, it should have just the
+            # location
+            (_component IN_LIST _MAGNUM_EXECUTABLE_COMPONENTS AND MAGNUM_${_COMPONENT}_EXECUTABLE)
+        )
+            set(Magnum_${_component}_FOUND TRUE)
+        else()
+            set(Magnum_${_component}_FOUND FALSE)
+            continue()
+        endif()
+
+        # Target and location for libraries
+        if(_component IN_LIST _MAGNUM_LIBRARY_COMPONENTS)
+            if(MAGNUM_BUILD_STATIC OR _component IN_LIST _MAGNUM_LIBRARY_COMPONENTS_ALWAYS_STATIC OR _component MATCHES ".+Application" OR _component MATCHES ".+Context")
+                add_library(Magnum::${_component} STATIC IMPORTED)
+            else()
+                add_library(Magnum::${_component} SHARED IMPORTED)
             endif()
 
-            if(MAGNUM_${_COMPONENT}_LIBRARY_DEBUG)
+            foreach(_CONFIG DEBUG RELEASE)
+                if(NOT MAGNUM_${_COMPONENT}_LIBRARY_${_CONFIG})
+                    continue()
+                endif()
+
                 set_property(TARGET Magnum::${_component} APPEND PROPERTY
-                    IMPORTED_CONFIGURATIONS DEBUG)
+                    IMPORTED_CONFIGURATIONS ${_CONFIG})
+                # Unfortunately for a DLL the two properties are swapped out,
+                # *.lib goes to IMPLIB, so it's duplicated like this
+                if(DEFINED MAGNUM_${_COMPONENT}_DLL_${_CONFIG})
+                    # Quotes to "fix" KDE's higlighter
+                    set_target_properties("Magnum::${_component}" PROPERTIES
+                        IMPORTED_LOCATION_${_CONFIG} ${MAGNUM_${_COMPONENT}_DLL_${_CONFIG}}
+                        IMPORTED_IMPLIB_${_CONFIG} ${MAGNUM_${_COMPONENT}_LIBRARY_${_CONFIG}})
+                else()
+                    set_property(TARGET Magnum::${_component} PROPERTY
+                        IMPORTED_LOCATION_${_CONFIG} ${MAGNUM_${_COMPONENT}_LIBRARY_${_CONFIG}})
+                endif()
+            endforeach()
+
+        # Target and location for plugins. Not dealing with DLL locations for
+        # those.
+        elseif(_component IN_LIST _MAGNUM_PLUGIN_COMPONENTS)
+            add_library(Magnum::${_component} UNKNOWN IMPORTED)
+
+            foreach(_CONFIG DEBUG RELEASE)
+                if(NOT MAGNUM_${_COMPONENT}_LIBRARY_${_CONFIG})
+                    continue()
+                endif()
+
+                set_property(TARGET Magnum::${_component} APPEND PROPERTY
+                    IMPORTED_CONFIGURATIONS ${_CONFIG})
                 set_property(TARGET Magnum::${_component} PROPERTY
-                    IMPORTED_LOCATION_DEBUG ${MAGNUM_${_COMPONENT}_LIBRARY_DEBUG})
-            endif()
+                    IMPORTED_LOCATION_${_CONFIG} ${MAGNUM_${_COMPONENT}_LIBRARY_${_CONFIG}})
+            endforeach()
+
+        # Target and location for executable components
+        elseif(_component IN_LIST _MAGNUM_EXECUTABLE_COMPONENTS)
+            add_executable(Magnum::${_component} IMPORTED)
+
+            set_property(TARGET Magnum::${_component} PROPERTY
+                IMPORTED_LOCATION ${MAGNUM_${_COMPONENT}_EXECUTABLE})
         endif()
 
         # Applications
         if(_component MATCHES ".+Application")
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/Platform)
-
             # Android application dependencies
             if(_component STREQUAL AndroidApplication)
                 find_package(EGL)
                 set_property(TARGET Magnum::${_component} APPEND PROPERTY
                     INTERFACE_LINK_LIBRARIES android EGL::EGL)
 
-            # EmscriptenApplication has no additional dependencies
+            # Emscripten application dependencies
+            elseif(_component STREQUAL EmscriptenApplication)
+                # Emscripten has various stuff implemented in JS
+                if(CORRADE_TARGET_EMSCRIPTEN)
+                    find_file(MAGNUM_PLATFORM_JS MagnumPlatform.js
+                        PATH_SUFFIXES lib)
+                    set_property(TARGET Magnum::${_component} APPEND PROPERTY
+                        # TODO switch to INTERFACE_LINK_OPTIONS and SHELL: once
+                        #   we require CMake 3.13 unconditionally
+                        INTERFACE_LINK_LIBRARIES "--js-library ${MAGNUM_PLATFORM_JS}")
+                endif()
 
             # GLFW application dependencies
             elseif(_component STREQUAL GlfwApplication)
@@ -715,7 +884,7 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
                         INTERFACE_LINK_LIBRARIES ${CMAKE_DL_LIBS})
                 endif()
 
-                # With GLVND (since CMake 3.11) we need to explicitly link to
+                # With GLVND (since CMake 3.10) we need to explicitly link to
                 # GLX/EGL because libOpenGL doesn't provide it. For EGL we have
                 # our own EGL find module, which makes things simpler. The
                 # upstream FindOpenGL is anything but simple. Also can't use
@@ -752,9 +921,17 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
                 elseif(CORRADE_TARGET_UNIX)
                     set_property(TARGET Magnum::${_component} APPEND PROPERTY
                         INTERFACE_LINK_LIBRARIES ${CMAKE_DL_LIBS})
+                # Emscripten has various stuff implemented in JS
+                elseif(CORRADE_TARGET_EMSCRIPTEN)
+                    find_file(MAGNUM_PLATFORM_JS MagnumPlatform.js
+                        PATH_SUFFIXES lib)
+                    set_property(TARGET Magnum::${_component} APPEND PROPERTY
+                        # TODO switch to INTERFACE_LINK_OPTIONS and SHELL: once
+                        #   we require CMake 3.13 unconditionally
+                        INTERFACE_LINK_LIBRARIES "--js-library ${MAGNUM_PLATFORM_JS}")
                 endif()
 
-                # With GLVND (since CMake 3.11) we need to explicitly link to
+                # With GLVND (since CMake 3.10) we need to explicitly link to
                 # GLX/EGL because libOpenGL doesn't provide it. For EGL we have
                 # our own EGL find module, which makes things simpler. The
                 # upstream FindOpenGL is anything but simple. Also can't use
@@ -784,12 +961,19 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
                 set_property(TARGET Magnum::${_component} APPEND PROPERTY
                     INTERFACE_LINK_LIBRARIES ${X11_LIBRARIES})
 
-                # With GLVND (since CMake 3.11) we need to explicitly link to
+                # With GLVND (since CMake 3.10) we need to explicitly link to
                 # GLX because libOpenGL doesn't provide it. Also can't use
                 # OpenGL_OpenGL_FOUND, because that one is set also if GLVND is
                 # *not* found. WTF. Also can't just check for
                 # OPENGL_opengl_LIBRARY because that's set even if
                 # OpenGL_GL_PREFERENCE is explicitly set to LEGACY.
+                #
+                # If MAGNUM_TARGET_GLES and MAGNUM_TARGET_EGL is set, these
+                # applications can be built only if GLVND is available as
+                # otherwise there would be a conflict between libGL and
+                # libGLES. Thus, if GLVND is not available, it won't link
+                # libGLX here, but that shouldn't be a problem since the
+                # application library won't exist either.
                 find_package(OpenGL)
                 if(OPENGL_opengl_LIBRARY AND OpenGL_GL_PREFERENCE STREQUAL GLVND)
                     set_property(TARGET Magnum::${_component} APPEND PROPERTY
@@ -827,12 +1011,9 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
 
         # Context libraries
         elseif(_component MATCHES ".+Context")
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/Platform)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES GLContext.h)
-
             # GLX context dependencies
             if(_component STREQUAL GlxContext)
-                # With GLVND (since CMake 3.11) we need to explicitly link to
+                # With GLVND (since CMake 3.10) we need to explicitly link to
                 # GLX because libOpenGL doesn't provide it. Also can't use
                 # OpenGL_OpenGL_FOUND, because that one is set also if GLVND is
                 # *not* found. If GLVND is not used, link to X11 instead. Also
@@ -871,7 +1052,7 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
         # GL library
         elseif(_component STREQUAL GL)
             if(NOT MAGNUM_TARGET_GLES OR (MAGNUM_TARGET_GLES AND NOT MAGNUM_TARGET_EGL AND NOT CORRADE_TARGET_IOS))
-                # If the GLVND library (CMake 3.11+) was found, link to the
+                # If the GLVND library (CMake 3.10+) was found, link to the
                 # imported target. Otherwise (and also on all systems except
                 # Linux) link to the classic libGL. Can't use
                 # OpenGL_OpenGL_FOUND, because that one is set also if GLVND is
@@ -890,46 +1071,23 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
                 find_package(OpenGLES2 REQUIRED)
                 set_property(TARGET Magnum::${_component} APPEND PROPERTY
                     INTERFACE_LINK_LIBRARIES OpenGLES2::OpenGLES2)
-            elseif(MAGNUM_TARGET_GLES3)
+            else()
                 find_package(OpenGLES3 REQUIRED)
                 set_property(TARGET Magnum::${_component} APPEND PROPERTY
                     INTERFACE_LINK_LIBRARIES OpenGLES3::OpenGLES3)
             endif()
 
-        # MaterialTools library
-        elseif(_component STREQUAL MaterialTools)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES PhongToPbrMetallicRoughness.h)
-
-        # MeshTools library
-        elseif(_component STREQUAL MeshTools)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES CompressIndices.h)
-
-        # OpenGLTester library
-        elseif(_component STREQUAL OpenGLTester)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/GL)
-
-        # VulkanTester library
-        elseif(_component STREQUAL VulkanTester)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX Magnum/Vk)
-
-        # Primitives library
-        elseif(_component STREQUAL Primitives)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES Cube.h)
-
+        # No special setup for MaterialTools library
+        # No special setup for MeshTools library
+        # No special setup for OpenGLTester library
+        # No special setup for VulkanTester library
+        # No special setup for Primitives library
         # No special setup for SceneGraph library
-
-        # SceneTools library
-        elseif(_component STREQUAL SceneTools)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES Hierarchy.h)
-
+        # No special setup for SceneTools library
         # No special setup for ShaderTools library
         # No special setup for Shaders library
         # No special setup for Text library
-
-        # TextureTools library
-        elseif(_component STREQUAL TextureTools)
-            set(_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES Atlas.h)
-
+        # No special setup for TextureTools library
         # No special setup for Trade library
 
         # Vk library
@@ -950,29 +1108,10 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
         # No special setup for TgaImporter plugin
         # No special setup for WavAudioImporter plugin
 
-        # Find library/plugin includes
-        if(_component IN_LIST _MAGNUM_LIBRARY_COMPONENTS OR _component IN_LIST _MAGNUM_PLUGIN_COMPONENTS)
-            find_path(_MAGNUM_${_COMPONENT}_INCLUDE_DIR
-                NAMES ${_MAGNUM_${_COMPONENT}_INCLUDE_PATH_NAMES}
-                HINTS ${MAGNUM_INCLUDE_DIR}/${_MAGNUM_${_COMPONENT}_INCLUDE_PATH_SUFFIX})
-            mark_as_advanced(_MAGNUM_${_COMPONENT}_INCLUDE_DIR)
-        endif()
-
-        # Automatic import of static plugins. Skip in case the include dir was
-        # not found -- that'll fail later with a proper message. Skip it also
-        # if the include dir doesn't contain the generated configure.h, which
-        # is the case with Magnum as a subproject and given plugin not enabled
-        # -- there it finds just the sources, where's just configure.h.cmake,
-        # and that's not useful for anything. The assumption here is that it
-        # will fail later anyway on the binary not being found.
-        if(_component IN_LIST _MAGNUM_PLUGIN_COMPONENTS AND _MAGNUM_${_COMPONENT}_INCLUDE_DIR AND EXISTS ${_MAGNUM_${_COMPONENT}_INCLUDE_DIR}/configure.h)
-            # Automatic import of static plugins
-            file(READ ${_MAGNUM_${_COMPONENT}_INCLUDE_DIR}/configure.h _magnum${_component}Configure)
-            string(FIND "${_magnum${_component}Configure}" "#define MAGNUM_${_COMPONENT}_BUILD_STATIC" _magnum${_component}_BUILD_STATIC)
-            if(NOT _magnum${_component}_BUILD_STATIC EQUAL -1)
-                set_property(TARGET Magnum::${_component} APPEND PROPERTY
-                    INTERFACE_SOURCES ${_MAGNUM_${_COMPONENT}_INCLUDE_DIR}/importStaticPlugin.cpp)
-            endif()
+        # Automatic import of static plugins
+        if(_component IN_LIST _MAGNUM_PLUGIN_COMPONENTS AND _MAGNUM_${_COMPONENT}_BUILD_STATIC)
+            set_property(TARGET Magnum::${_component} APPEND PROPERTY
+                INTERFACE_SOURCES ${_MAGNUM_${_COMPONENT}_INCLUDE_DIR}/importStaticPlugin.cpp)
         endif()
 
         # Link to core Magnum library, add inter-library dependencies. If there
@@ -985,7 +1124,7 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
             endforeach()
             set_property(TARGET Magnum::${_component} APPEND PROPERTY
                 INTERFACE_LINK_LIBRARIES Magnum::Magnum)
-            set(_MAGNUM_${component}_OPTIONAL_DEPENDENCIES_TO_ADD )
+            set(_MAGNUM_${_component}_OPTIONAL_DEPENDENCIES_TO_ADD )
             foreach(_dependency ${_MAGNUM_${_component}_DEPENDENCIES})
                 if(NOT _MAGNUM_${_component}_${_dependency}_DEPENDENCY_IS_OPTIONAL)
                     set_property(TARGET Magnum::${_component} APPEND PROPERTY
@@ -998,13 +1137,6 @@ foreach(_component ${Magnum_FIND_COMPONENTS})
             if(_MAGNUM_${_component}_OPTIONAL_DEPENDENCIES_TO_ADD)
                 list(APPEND _MAGNUM_OPTIONAL_DEPENDENCIES_TO_ADD ${_component})
             endif()
-        endif()
-
-        # Decide if the library was found
-        if(((_component IN_LIST _MAGNUM_LIBRARY_COMPONENTS OR _component IN_LIST _MAGNUM_PLUGIN_COMPONENTS) AND _MAGNUM_${_COMPONENT}_INCLUDE_DIR AND (MAGNUM_${_COMPONENT}_LIBRARY_DEBUG OR MAGNUM_${_COMPONENT}_LIBRARY_RELEASE)) OR (_component IN_LIST _MAGNUM_EXECUTABLE_COMPONENTS AND MAGNUM_${_COMPONENT}_EXECUTABLE))
-            set(Magnum_${_component}_FOUND TRUE)
-        else()
-            set(Magnum_${_component}_FOUND FALSE)
         endif()
     endif()
 
@@ -1047,24 +1179,6 @@ if(CORRADE_TARGET_EMSCRIPTEN)
         MAGNUM_EMSCRIPTENAPPLICATION_JS
         MAGNUM_WINDOWLESSEMSCRIPTENAPPLICATION_JS
         MAGNUM_WEBAPPLICATION_CSS)
-
-    # If we are on CMake 3.13 and up, `-s USE_WEBGL2=1` linker option is
-    # propagated from FindOpenGLES3.cmake already. If not (and the GL library
-    # is used), we need to modify the global CMAKE_EXE_LINKER_FLAGS. Do it here
-    # instead of in FindOpenGLES3.cmake so it works also for CMake subprojects
-    # (in which case find_package(OpenGLES3) is called in (and so
-    # CMAKE_EXE_LINKER_FLAGS would be modified in) Magnum's root CMakeLists.txt
-    # and thus can't affect the variable in the outer project). CMake supports
-    # IN_LIST as an operator since 3.1 (Emscripten needs at least 3.7), but
-    # it's behind a policy, so enable that one as well.
-    cmake_policy(SET CMP0057 NEW)
-    # TODO since 1.39.19 it's possible to use `-sUSE_WEBGL2=1`, which can be
-    #   then passed via target_link_libraries() etc. without requiring CMake
-    #   3.13: https://github.com/emscripten-core/emscripten/blob/main/ChangeLog.md#13919-07072020
-    #   -- change to that once we drop support for older Emscripten versions
-    if(CMAKE_VERSION VERSION_LESS 3.13 AND GL IN_LIST Magnum_FIND_COMPONENTS AND NOT MAGNUM_TARGET_GLES2 AND NOT CMAKE_EXE_LINKER_FLAGS MATCHES "-s USE_WEBGL2=1")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s USE_WEBGL2=1")
-    endif()
 endif()
 
 # For CMake 3.16+ with REASON_FAILURE_MESSAGE, provide additional potentially
@@ -1098,6 +1212,13 @@ if(NOT CMAKE_VERSION VERSION_LESS 3.16)
 
     string(REPLACE ";" " " _MAGNUM_REASON_FAILURE_MESSAGE "${_MAGNUM_REASON_FAILURE_MESSAGE}")
     set(_MAGNUM_REASON_FAILURE_MESSAGE REASON_FAILURE_MESSAGE "${_MAGNUM_REASON_FAILURE_MESSAGE}")
+endif()
+
+# Remove Magnum's dependency module dir from CMAKE_MODULE_PATH again. Do it
+# before the FPHSA call which may exit early in case of a failure.
+if(_MAGNUM_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH)
+    list(REMOVE_ITEM CMAKE_MODULE_PATH ${_MAGNUM_DEPENDENCY_MODULE_DIR})
+    unset(_MAGNUM_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH)
 endif()
 
 # Complete the check with also all components
@@ -1291,3 +1412,6 @@ if(MAGNUM_PLUGINS_RELEASE_DIR)
     set(MAGNUM_PLUGINS_SCENECONVERTER_RELEASE_DIR ${MAGNUM_PLUGINS_RELEASE_DIR}/sceneconverters)
     set(MAGNUM_PLUGINS_AUDIOIMPORTER_RELEASE_DIR ${MAGNUM_PLUGINS_RELEASE_DIR}/audioimporters)
 endif()
+
+# Resets CMake policies set at the top of the file to not affect other code.
+cmake_policy(POP)

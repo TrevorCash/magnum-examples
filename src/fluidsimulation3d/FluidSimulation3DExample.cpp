@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
         2019 — Nghia Truong <nghiatruong.vn@gmail.com>
 
     This is free and unencumbered software released into the public domain.
@@ -39,6 +40,7 @@
 #include <Magnum/GL/PixelFormat.h>
 #include <Magnum/Math/Color.h>
 #include <Magnum/Math/FunctionsBatch.h>
+#include <Magnum/Math/Time.h>
 #include <Magnum/GL/Context.h>
 #include <Magnum/GL/Version.h>
 #include <Magnum/ImGuiIntegration/Context.hpp>
@@ -69,16 +71,16 @@ class FluidSimulation3DExample: public Platform::Application {
         void viewportEvent(ViewportEvent& event) override;
         void keyPressEvent(KeyEvent& event) override;
         void keyReleaseEvent(KeyEvent& event) override;
-        void mousePressEvent(MouseEvent& event) override;
-        void mouseReleaseEvent(MouseEvent& event) override;
-        void mouseMoveEvent(MouseMoveEvent& event) override;
-        void mouseScrollEvent(MouseScrollEvent& event) override;
+        void pointerPressEvent(PointerEvent& event) override;
+        void pointerReleaseEvent(PointerEvent& event) override;
+        void pointerMoveEvent(PointerMoveEvent& event) override;
+        void scrollEvent(ScrollEvent& event) override;
         void textInputEvent(TextInputEvent& event) override;
         void drawEvent() override;
 
         /* Helper functions for camera movement */
-        Float depthAt(const Vector2i& windowPosition);
-        Vector3 unproject(const Vector2i& windowPosition, Float depth) const;
+        Float depthAt(const Vector2& windowPosition);
+        Vector3 unproject(const Vector2& windowPosition, Float depth) const;
 
         /* Fluid simulation helper functions */
         void showMenu();
@@ -97,7 +99,7 @@ class FluidSimulation3DExample: public Platform::Application {
         /* Camera helpers */
         Vector3 _defaultCamPosition{0.0f, 1.5f, 8.0f};
         Vector3 _defaultCamTarget{0.0f, 1.0f, 0.0f};
-        Vector2i _prevMousePosition;
+        Vector2 _prevPointerPosition;
         Vector3  _rotationPoint, _translationPoint;
         Float _lastDepth;
         Containers::Pointer<Object3D> _objCamera;
@@ -220,7 +222,7 @@ FluidSimulation3DExample::FluidSimulation3DExample(const Arguments& arguments): 
 
     /* Start the timer, loop at 60 Hz max */
     setSwapInterval(1);
-    setMinimalLoopPeriod(16);
+    setMinimalLoopPeriod(16.0_msec);
     _timeline.start();
 }
 
@@ -298,15 +300,15 @@ void FluidSimulation3DExample::viewportEvent(ViewportEvent& event) {
 
 void FluidSimulation3DExample::keyPressEvent(KeyEvent& event) {
     switch(event.key()) {
-        case KeyEvent::Key::H:
+        case Key::H:
             _showMenu ^= true;
             event.setAccepted(true);
             break;
-        case KeyEvent::Key::R:
+        case Key::R:
             initializeScene();
             event.setAccepted(true);
             break;
-        case KeyEvent::Key::Space:
+        case Key::Space:
             _pausedSimulation ^= true;
             event.setAccepted(true);
             break;
@@ -324,15 +326,19 @@ void FluidSimulation3DExample::keyReleaseEvent(KeyEvent& event) {
     }
 }
 
-void FluidSimulation3DExample::mousePressEvent(MouseEvent& event) {
-    if(_imGuiContext.handleMousePressEvent(event)) {
+void FluidSimulation3DExample::pointerPressEvent(PointerEvent& event) {
+    if(_imGuiContext.handlePointerPressEvent(event)) {
         event.setAccepted(true);
         return;
     }
 
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
+
     /* Update camera */
     {
-        _prevMousePosition = event.position();
+        _prevPointerPosition = event.position();
         const Float currentDepth = depthAt(event.position());
         const Float depth = currentDepth == 1.0f ? _lastDepth : currentDepth;
         _translationPoint = unproject(event.position(), depth);
@@ -348,27 +354,29 @@ void FluidSimulation3DExample::mousePressEvent(MouseEvent& event) {
     _mousePressed = true;
 }
 
-void FluidSimulation3DExample::mouseReleaseEvent(MouseEvent& event) {
+void FluidSimulation3DExample::pointerReleaseEvent(PointerEvent& event) {
     _mousePressed = false;
 
-    if(_imGuiContext.handleMouseReleaseEvent(event)) {
+    if(_imGuiContext.handlePointerReleaseEvent(event)) {
         event.setAccepted(true);
     }
 }
 
-void FluidSimulation3DExample::mouseMoveEvent(MouseMoveEvent& event) {
-    if(_imGuiContext.handleMouseMoveEvent(event)) {
+void FluidSimulation3DExample::pointerMoveEvent(PointerMoveEvent& event) {
+    if(_imGuiContext.handlePointerMoveEvent(event)) {
         event.setAccepted(true);
         return;
     }
 
-    const Vector2 delta = 3.0f*Vector2{event.position() - _prevMousePosition}/Vector2{framebufferSize()};
-    _prevMousePosition = event.position();
+    if(!event.isPrimary() ||
+       !(event.pointers() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 
-    if(!event.buttons()) return;
+    const Vector2 delta = 3.0f*Vector2{event.position() - _prevPointerPosition}/Vector2{framebufferSize()};
+    _prevPointerPosition = event.position();
 
     /* Translate */
-    if(event.modifiers() & MouseMoveEvent::Modifier::Shift) {
+    if(event.modifiers() & Modifier::Shift) {
         const Vector3 p = unproject(event.position(), _lastDepth);
         _objCamera->translateLocal(_translationPoint - p); /* is Z always 0? */
         _translationPoint = p;
@@ -385,13 +393,13 @@ void FluidSimulation3DExample::mouseMoveEvent(MouseMoveEvent& event) {
     event.setAccepted();
 }
 
-void FluidSimulation3DExample::mouseScrollEvent(MouseScrollEvent& event) {
+void FluidSimulation3DExample::scrollEvent(ScrollEvent& event) {
     const Float delta = event.offset().y();
     if(Math::abs(delta) < 1.0e-2f) {
         return;
     }
 
-    if(_imGuiContext.handleMouseScrollEvent(event)) {
+    if(_imGuiContext.handleScrollEvent(event)) {
         /* Prevent scrolling the page */
         event.setAccepted();
         return;
@@ -417,11 +425,11 @@ void FluidSimulation3DExample::textInputEvent(TextInputEvent& event) {
     }
 }
 
-Float FluidSimulation3DExample::depthAt(const Vector2i& windowPosition) {
+Float FluidSimulation3DExample::depthAt(const Vector2& windowPosition) {
     /* First scale the position from being relative to window size to being
        relative to framebuffer size as those two can be different on HiDPI
        systems */
-    const Vector2i position = windowPosition*Vector2{framebufferSize()}/Vector2{windowSize()};
+    const Vector2i position = windowPosition*framebufferSize()/Vector2{windowSize()};
     const Vector2i fbPosition{position.x(), GL::defaultFramebuffer.viewport().sizeY() - position.y() - 1};
 
     GL::defaultFramebuffer.mapForRead(GL::DefaultFramebuffer::ReadAttachment::Front);
@@ -432,12 +440,12 @@ Float FluidSimulation3DExample::depthAt(const Vector2i& windowPosition) {
     return Math::min<Float>(Containers::arrayCast<const Float>(data.data()));
 }
 
-Vector3 FluidSimulation3DExample::unproject(const Vector2i& windowPosition, float depth) const {
+Vector3 FluidSimulation3DExample::unproject(const Vector2& windowPosition, float depth) const {
     /* We have to take window size, not framebuffer size, since the position is
        in window coordinates and the two can be different on HiDPI systems */
     const Vector2i viewSize = windowSize();
-    const Vector2i viewPosition = Vector2i{windowPosition.x(), viewSize.y() - windowPosition.y() - 1};
-    const Vector3 in{2.0f*Vector2{viewPosition}/Vector2{viewSize} - Vector2{1.0f}, depth*2.0f - 1.0f};
+    const Vector2 viewPosition{windowPosition.x(), viewSize.y() - windowPosition.y() - 1};
+    const Vector3 in{2.0f*viewPosition/Vector2{viewSize} - Vector2{1.0f}, depth*2.0f - 1.0f};
 
     return _camera->projectionMatrix().inverted().transformPoint(in);
 }

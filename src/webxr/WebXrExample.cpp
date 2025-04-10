@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
         2019 — Jonathan Hale <squareys@googlemail.com>
 
     This is free and unencumbered software released into the public domain.
@@ -68,8 +69,8 @@ class WebXrExample: public Platform::Application {
 
     private:
         void drawEvent() override;
-        void keyPressEvent(KeyEvent& e) override;
-        void mousePressEvent(MouseEvent& event) override;
+        void keyPressEvent(KeyEvent& event) override;
+        void pointerPressEvent(PointerEvent& event) override;
 
         GL::Mesh _cubeMesh;
         Matrix4 _cubeTransformations[4]{
@@ -239,14 +240,17 @@ void WebXrExample::onError(int error) {
     }
 }
 
-void WebXrExample::keyPressEvent(KeyEvent& e) {
-    if(e.key() == KeyEvent::Key::Esc && _inXR) {
+void WebXrExample::keyPressEvent(KeyEvent& event) {
+    if(event.key() == Key::Esc && _inXR) {
         webxr_request_exit();
     }
 }
 
-void WebXrExample::mousePressEvent(MouseEvent& event) {
-    if(event.button() != MouseEvent::Button::Left) return;
+void WebXrExample::pointerPressEvent(PointerEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
+
     /* Request rendering to the XR device */
     webxr_request_session();
     event.setAccepted();

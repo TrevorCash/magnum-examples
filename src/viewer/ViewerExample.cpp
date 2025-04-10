@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
 
     This is free and unencumbered software released into the public domain.
 
@@ -70,12 +71,12 @@ class ViewerExample: public Platform::Application {
     private:
         void drawEvent() override;
         void viewportEvent(ViewportEvent& event) override;
-        void mousePressEvent(MouseEvent& event) override;
-        void mouseReleaseEvent(MouseEvent& event) override;
-        void mouseMoveEvent(MouseMoveEvent& event) override;
-        void mouseScrollEvent(MouseScrollEvent& event) override;
+        void pointerPressEvent(PointerEvent& event) override;
+        void pointerReleaseEvent(PointerEvent& event) override;
+        void pointerMoveEvent(PointerMoveEvent& event) override;
+        void scrollEvent(ScrollEvent& event) override;
 
-        Vector3 positionOnSphere(const Vector2i& position) const;
+        Vector3 positionOnSphere(const Vector2& position) const;
 
         Shaders::PhongGL _coloredShader;
         Shaders::PhongGL _texturedShader{Shaders::PhongGL::Configuration{}
@@ -173,7 +174,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
 
         Containers::Optional<Trade::ImageData2D> imageData =
             importer->image2D(textureData->image());
-        if(!imageData || !imageData->isCompressed()) {
+        if(!imageData || imageData->isCompressed()) {
             Warning{} << "Cannot load image" << textureData->image()
                 << importer->image2DName(textureData->image());
             continue;
@@ -218,7 +219,7 @@ ViewerExample::ViewerExample(const Arguments& arguments):
         }
 
         MeshTools::CompileFlags flags;
-        if(meshData->hasAttribute(Trade::MeshAttribute::Normal))
+        if(!meshData->hasAttribute(Trade::MeshAttribute::Normal))
             flags |= MeshTools::CompileFlag::GenerateFlatNormals;
         _meshes[i] = MeshTools::compile(*meshData, flags);
     }
@@ -325,7 +326,8 @@ void TexturedDrawable::draw(const Matrix4& transformationMatrix, SceneGraph::Cam
 }
 
 void ViewerExample::drawEvent() {
-    GL::defaultFramebuffer.clear(GL::FramebufferClear::Color|GL::FramebufferClear::Depth);
+    GL::defaultFramebuffer.clear(GL::FramebufferClear::Color|
+                                 GL::FramebufferClear::Depth);
 
     _camera->draw(_drawables);
 
@@ -337,17 +339,23 @@ void ViewerExample::viewportEvent(ViewportEvent& event) {
     _camera->setViewport(event.windowSize());
 }
 
-void ViewerExample::mousePressEvent(MouseEvent& event) {
-    if(event.button() == MouseEvent::Button::Left)
-        _previousPosition = positionOnSphere(event.position());
+void ViewerExample::pointerPressEvent(PointerEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
+
+    _previousPosition = positionOnSphere(event.position());
 }
 
-void ViewerExample::mouseReleaseEvent(MouseEvent& event) {
-    if(event.button() == MouseEvent::Button::Left)
-        _previousPosition = Vector3();
+void ViewerExample::pointerReleaseEvent(PointerEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
+
+    _previousPosition = {};
 }
 
-void ViewerExample::mouseScrollEvent(MouseScrollEvent& event) {
+void ViewerExample::scrollEvent(ScrollEvent& event) {
     if(!event.offset().y()) return;
 
     /* Distance to origin */
@@ -360,20 +368,26 @@ void ViewerExample::mouseScrollEvent(MouseScrollEvent& event) {
     redraw();
 }
 
-Vector3 ViewerExample::positionOnSphere(const Vector2i& position) const {
-    const Vector2 positionNormalized = Vector2{position}/Vector2{_camera->viewport()} - Vector2{0.5f};
+Vector3 ViewerExample::positionOnSphere(const Vector2& position) const {
+    const Vector2 positionNormalized =
+        position/Vector2{_camera->viewport()} - Vector2{0.5f};
     const Float length = positionNormalized.length();
-    const Vector3 result(length > 1.0f ? Vector3(positionNormalized, 0.0f) : Vector3(positionNormalized, 1.0f - length));
+    const Vector3 result = length > 1.0f ?
+        Vector3{positionNormalized, 0.0f} :
+        Vector3{positionNormalized, 1.0f - length};
     return (result*Vector3::yScale(-1.0f)).normalized();
 }
 
-void ViewerExample::mouseMoveEvent(MouseMoveEvent& event) {
-    if(!(event.buttons() & MouseMoveEvent::Button::Left)) return;
+void ViewerExample::pointerMoveEvent(PointerMoveEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointers() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 
     const Vector3 currentPosition = positionOnSphere(event.position());
     const Vector3 axis = Math::cross(_previousPosition, currentPosition);
 
-    if(_previousPosition.length() < 0.001f || axis.length() < 0.001f) return;
+    if(_previousPosition.isZero() || axis.isZero())
+        return;
 
     _manipulator.rotate(Math::angle(_previousPosition, currentPosition), axis.normalized());
     _previousPosition = currentPosition;

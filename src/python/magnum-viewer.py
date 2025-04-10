@@ -6,7 +6,8 @@
 #   Original authors — credit is appreciated but not required:
 #
 #       2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-#       2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+#       2020, 2021, 2022, 2023, 2024, 2025
+#            — Vladimír Vondruš <mosra@centrum.cz>
 #
 #   This is free and unencumbered software released into the public domain.
 #
@@ -88,7 +89,7 @@ class ViewerExample(Application):
         colored_shader.shininess = 80.0
 
         # Import Suzanne head and eyes (yes, sorry, it's all hardcoded here)
-        importer = trade.ImporterManager().load_and_instantiate('TinyGltfImporter')
+        importer = trade.ImporterManager().load_and_instantiate('GltfImporter')
         importer.open_file(os.path.join(os.path.dirname(__file__),
                                         '../viewer/scene.glb'))
         suzanne_object = Object3D(parent=self._manipulator)
@@ -101,8 +102,6 @@ class ViewerExample(Application):
         self._suzanne_eyes = ColoredDrawable(suzanne_object, self._drawables,
             suzanne_eyes_mesh, colored_shader, Color3(0.95))
 
-        self._previous_mouse_position = Vector2i()
-
     def draw_event(self):
         gl.default_framebuffer.clear(gl.FramebufferClear.COLOR|
                                      gl.FramebufferClear.DEPTH)
@@ -110,18 +109,17 @@ class ViewerExample(Application):
         self._camera.draw(self._drawables)
         self.swap_buffers()
 
-    def mouse_move_event(self, event: Application.MouseMoveEvent):
-        if event.buttons & self.MouseMoveEvent.Buttons.LEFT:
-            delta = 1.0*(
-                Vector2(event.position - self._previous_mouse_position)/
-                Vector2(self.window_size))
-            self._manipulator.rotate_y_local(Rad(delta.x))
-            self._manipulator.rotate_x(Rad(delta.y))
-            self.redraw()
+    def pointer_move_event(self, event: Application.PointerMoveEvent):
+        if not event.is_primary or \
+           not (event.pointers & (self.Pointer.MOUSE_LEFT|self.Pointer.FINGER)):
+            return
 
-        self._previous_mouse_position = event.position
+        delta = 1.0*event.relative_position/Vector2(self.window_size)
+        self._manipulator.rotate_y_local(Rad(delta.x))
+        self._manipulator.rotate_x(Rad(delta.y))
+        self.redraw()
 
-    def mouse_scroll_event(self, event: Application.MouseScrollEvent):
+    def scroll_event(self, event: Application.ScrollEvent):
         if not event.offset.y: return
 
         # Distance to origin

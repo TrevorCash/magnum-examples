@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
 
     This is free and unencumbered software released into the public domain.
 
@@ -30,6 +31,7 @@
 #include <Magnum/GL/DefaultFramebuffer.h>
 #include <Magnum/GL/Mesh.h>
 #include <Magnum/GL/Renderer.h>
+#include <Magnum/Math/Angle.h>
 #include <Magnum/Math/Color.h>
 #include <Magnum/Math/Matrix4.h>
 #include <Magnum/MeshTools/Compile.h>
@@ -40,7 +42,7 @@
 
 namespace Magnum { namespace Examples {
 
-using namespace Magnum::Math::Literals;
+using namespace Math::Literals;
 
 class PrimitivesExample: public Platform::Application {
     public:
@@ -48,9 +50,8 @@ class PrimitivesExample: public Platform::Application {
 
     private:
         void drawEvent() override;
-        void mousePressEvent(MouseEvent& event) override;
-        void mouseReleaseEvent(MouseEvent& event) override;
-        void mouseMoveEvent(MouseMoveEvent& event) override;
+        void pointerReleaseEvent(PointerEvent& event) override;
+        void pointerMoveEvent(PointerMoveEvent& event) override;
 
         GL::Mesh _mesh;
         Shaders::PhongGL _shader;
@@ -92,21 +93,21 @@ void PrimitivesExample::drawEvent() {
     swapBuffers();
 }
 
-void PrimitivesExample::mousePressEvent(MouseEvent& event) {
-    if(event.button() != MouseEvent::Button::Left) return;
+void PrimitivesExample::pointerReleaseEvent(PointerEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointer() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 
-    event.setAccepted();
-}
-
-void PrimitivesExample::mouseReleaseEvent(MouseEvent& event) {
     _color = Color3::fromHsv({_color.hue() + 50.0_degf, 1.0f, 1.0f});
 
     event.setAccepted();
     redraw();
 }
 
-void PrimitivesExample::mouseMoveEvent(MouseMoveEvent& event) {
-    if(!(event.buttons() & MouseMoveEvent::Button::Left)) return;
+void PrimitivesExample::pointerMoveEvent(PointerMoveEvent& event) {
+    if(!event.isPrimary() ||
+       !(event.pointers() & (Pointer::MouseLeft|Pointer::Finger)))
+        return;
 
     Vector2 delta = 3.0f*Vector2{event.relativePosition()}/Vector2{windowSize()};
 

@@ -4,7 +4,8 @@
     Original authors — credit is appreciated but not required:
 
         2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-        2020, 2021, 2022, 2023 — Vladimír Vondruš <mosra@centrum.cz>
+        2020, 2021, 2022, 2023, 2024, 2025
+             — Vladimír Vondruš <mosra@centrum.cz>
         2018 — ShaddyAQN <ShaddyAQN@gmail.com>
         2018 — Jonathan Hale <squareys@googlemail.com>
         2018 — Tomáš Skřivan <skrivantomas@seznam.cz>
@@ -32,6 +33,7 @@
 */
 
 #include <Magnum/Math/Color.h>
+#include <Magnum/Math/Time.h>
 #include <Magnum/GL/DefaultFramebuffer.h>
 #include <Magnum/GL/Renderer.h>
 #include <Magnum/ImGuiIntegration/Context.hpp>
@@ -59,10 +61,10 @@ class ImGuiExample: public Platform::Application {
         void keyPressEvent(KeyEvent& event) override;
         void keyReleaseEvent(KeyEvent& event) override;
 
-        void mousePressEvent(MouseEvent& event) override;
-        void mouseReleaseEvent(MouseEvent& event) override;
-        void mouseMoveEvent(MouseMoveEvent& event) override;
-        void mouseScrollEvent(MouseScrollEvent& event) override;
+        void pointerPressEvent(PointerEvent& event) override;
+        void pointerReleaseEvent(PointerEvent& event) override;
+        void pointerMoveEvent(PointerMoveEvent& event) override;
+        void scrollEvent(ScrollEvent& event) override;
         void textInputEvent(TextInputEvent& event) override;
 
     private:
@@ -91,7 +93,7 @@ ImGuiExample::ImGuiExample(const Arguments& arguments): Platform::Application{ar
 
     #if !defined(MAGNUM_TARGET_WEBGL) && !defined(CORRADE_TARGET_ANDROID)
     /* Have some sane speed, please */
-    setMinimalLoopPeriod(16);
+    setMinimalLoopPeriod(16.0_msec);
     #endif
 }
 
@@ -175,20 +177,20 @@ void ImGuiExample::keyReleaseEvent(KeyEvent& event) {
     if(_imgui.handleKeyReleaseEvent(event)) return;
 }
 
-void ImGuiExample::mousePressEvent(MouseEvent& event) {
-    if(_imgui.handleMousePressEvent(event)) return;
+void ImGuiExample::pointerPressEvent(PointerEvent& event) {
+    if(_imgui.handlePointerPressEvent(event)) return;
 }
 
-void ImGuiExample::mouseReleaseEvent(MouseEvent& event) {
-    if(_imgui.handleMouseReleaseEvent(event)) return;
+void ImGuiExample::pointerReleaseEvent(PointerEvent& event) {
+    if(_imgui.handlePointerReleaseEvent(event)) return;
 }
 
-void ImGuiExample::mouseMoveEvent(MouseMoveEvent& event) {
-    if(_imgui.handleMouseMoveEvent(event)) return;
+void ImGuiExample::pointerMoveEvent(PointerMoveEvent& event) {
+    if(_imgui.handlePointerMoveEvent(event)) return;
 }
 
-void ImGuiExample::mouseScrollEvent(MouseScrollEvent& event) {
-    if(_imgui.handleMouseScrollEvent(event)) {
+void ImGuiExample::scrollEvent(ScrollEvent& event) {
+    if(_imgui.handleScrollEvent(event)) {
         /* Prevent scrolling the page */
         event.setAccepted();
         return;

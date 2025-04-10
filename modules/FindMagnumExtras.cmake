@@ -44,7 +44,8 @@
 #   This file is part of Magnum.
 #
 #   Copyright © 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019,
-#               2020, 2021, 2022, 2023 Vladimír Vondruš <mosra@centrum.cz>
+#               2020, 2021, 2022, 2023, 2024, 2025
+#             Vladimír Vondruš <mosra@centrum.cz>
 #
 #   Permission is hereby granted, free of charge, to any person obtaining a
 #   copy of this software and associated documentation files (the "Software"),
@@ -68,10 +69,6 @@
 # Corrade library dependencies
 set(_MAGNUMEXTRAS_CORRADE_DEPENDENCIES )
 foreach(_component ${MagnumExtras_FIND_COMPONENTS})
-    if(_component STREQUAL Ui)
-        set(_MAGNUMEXTRAS_${_component}_CORRADE_DEPENDENCIES Interconnect)
-    endif()
-
     list(APPEND _MAGNUMEXTRAS_CORRADE_DEPENDENCIES ${_MAGNUMEXTRAS_${_component}_CORRADE_DEPENDENCIES})
 endforeach()
 find_package(Corrade REQUIRED ${_MAGNUMEXTRAS_CORRADE_DEPENDENCIES})
@@ -80,17 +77,47 @@ find_package(Corrade REQUIRED ${_MAGNUMEXTRAS_CORRADE_DEPENDENCIES})
 set(_MAGNUMEXTRAS_MAGNUM_DEPENDENCIES )
 foreach(_component ${MagnumExtras_FIND_COMPONENTS})
     if(_component STREQUAL Ui)
-        set(_MAGNUMEXTRAS_${_component}_MAGNUM_DEPENDENCIES Text GL)
+        set(_MAGNUMEXTRAS_${_component}_MAGNUM_DEPENDENCIES Text GL Trade)
     endif()
 
     list(APPEND _MAGNUMEXTRAS_MAGNUM_DEPENDENCIES ${_MAGNUMEXTRAS_${_component}_MAGNUM_DEPENDENCIES})
 endforeach()
 find_package(Magnum REQUIRED ${_MAGNUMEXTRAS_MAGNUM_DEPENDENCIES})
 
-# Global integration include dir
-find_path(MAGNUMEXTRAS_INCLUDE_DIR Magnum
+# Global include dir that's unique to Magnum Extras. Often it will be installed
+# alongside Magnum, which is why the hint, but if not, it shouldn't just pick
+# MAGNUM_INCLUDE_DIR because then _MAGNUMEXTRAS_*_INCLUDE_DIR will fail to be
+# found. In case of CMake subprojects the versionExtras.h is generated inside
+# the build dir so this won't find it, instead src/CMakeLists.txt forcibly sets
+# MAGNUMEXTRAS_INCLUDE_DIR as an internal cache value to make that work.
+find_path(MAGNUMEXTRAS_INCLUDE_DIR Magnum/versionExtras.h
     HINTS ${MAGNUM_INCLUDE_DIR})
 mark_as_advanced(MAGNUMEXTRAS_INCLUDE_DIR)
+
+# CMake module dir for dependencies. It might not be present at all if no
+# feature that needs them is enabled, in which case it'll be left at NOTFOUND.
+# But in that case it should also not be subsequently needed for any
+# find_package(). If this is called from a superproject, the
+# _MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR is already set by modules/CMakeLists.txt.
+#
+# There's no dependency Find modules so far. Once there are, uncomment this and
+# list the modules in NAMES.
+#find_path(_MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR
+#    NAMES
+#    PATH_SUFFIXES share/cmake/MagnumExtras/dependencies)
+#mark_as_advanced(_MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR)
+
+# If the module dir is found and is not present in CMAKE_MODULE_PATH already
+# (such as when someone explicitly added it, or if it's the Magnum's modules/
+# dir in case of a superproject), add it as the first before all other. Set a
+# flag to remove it again at the end, so the modules don't clash with Find
+# modules of the same name from other projects.
+if(_MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR AND NOT _MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR IN_LIST CMAKE_MODULE_PATH)
+    set(CMAKE_MODULE_PATH ${_MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR} ${CMAKE_MODULE_PATH})
+    set(_MAGNUMEXTRAS_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH ON)
+else()
+    unset(_MAGNUMEXTRAS_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH)
+endif()
 
 # Component distinction (listing them explicitly to avoid mistakes with finding
 # components from other repositories)
@@ -131,62 +158,134 @@ foreach(_component ${MagnumExtras_FIND_COMPONENTS})
     # Create imported target in case the library is found. If the project is
     # added as subproject to CMake, the target already exists and all the
     # required setup is already done from the build tree.
-    if(TARGET MagnumExtras::${_component})
+    if(TARGET "MagnumExtras::${_component}") # Quotes to "fix" KDE's higlighter
         set(MagnumExtras_${_component}_FOUND TRUE)
     else()
+        # Find library includes. Each has a configure.h file so there doesn't
+        # need to be any specialized per-library handling.
+        if(_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS)
+            find_file(_MAGNUMEXTRAS_${_COMPONENT}_CONFIGURE_FILE configure.h
+                HINTS ${MAGNUMEXTRAS_INCLUDE_DIR}/Magnum/${_component})
+            mark_as_advanced(_MAGNUMEXTRAS_${_COMPONENT}_CONFIGURE_FILE)
+        endif()
+
         # Library components
         if(_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS)
-            add_library(MagnumExtras::${_component} UNKNOWN IMPORTED)
-
             # Try to find both debug and release version
             find_library(MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_DEBUG Magnum${_component}-d)
             find_library(MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_RELEASE Magnum${_component})
             mark_as_advanced(MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_DEBUG
                 MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_RELEASE)
 
-            if(MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_RELEASE)
-                set_property(TARGET MagnumExtras::${_component} APPEND PROPERTY
-                    IMPORTED_CONFIGURATIONS RELEASE)
-                set_property(TARGET MagnumExtras::${_component} PROPERTY
-                    IMPORTED_LOCATION_RELEASE ${MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_RELEASE})
+            # Determine if the library is static or dynamic by reading the
+            # per-library config file. If the file wasn't found, skip this so
+            # it fails on the FPHSA below and not right here.
+            if(_MAGNUMEXTRAS_${_COMPONENT}_CONFIGURE_FILE)
+                file(READ ${_MAGNUMEXTRAS_${_COMPONENT}_CONFIGURE_FILE} _magnumExtrasConfigure)
+                string(REGEX REPLACE ";" "\\\\;" _magnumExtrasConfigure "${_magnumExtrasConfigure}")
+                string(REGEX REPLACE "\n" ";" _magnumExtrasConfigure "${_magnumExtrasConfigure}")
+                list(FIND _magnumExtrasConfigure "#define MAGNUM_${_COMPONENT}_BUILD_STATIC" _magnumExtrasBuildStatic)
+                if(NOT _magnumExtrasBuildStatic EQUAL -1)
+                    # The variable is inconsistently named between C++ and
+                    # CMake, so keep it underscored / private
+                    set(_MAGNUMEXTRAS_${_COMPONENT}_BUILD_STATIC ON)
+                endif()
             endif()
 
-            if(MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_DEBUG)
-                set_property(TARGET MagnumExtras::${_component} APPEND PROPERTY
-                    IMPORTED_CONFIGURATIONS DEBUG)
-                set_property(TARGET MagnumExtras::${_component} PROPERTY
-                    IMPORTED_LOCATION_DEBUG ${MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_DEBUG})
+            # On Windows, if we have a dynamic build of given library, find the
+            # DLLs as well. Abuse find_program() since the DLLs should be
+            # alongside usual executables. On MinGW they however have a lib
+            # prefix.
+            if(CORRADE_TARGET_WINDOWS AND NOT _MAGNUMEXTRAS_${_COMPONENT}_BUILD_STATIC)
+                find_program(MAGNUMEXTRAS_${_COMPONENT}_DLL_DEBUG ${CMAKE_SHARED_LIBRARY_PREFIX}Magnum${_component}-d.dll)
+                find_program(MAGNUMEXTRAS_${_COMPONENT}_DLL_RELEASE ${CMAKE_SHARED_LIBRARY_PREFIX}Magnum${_component}.dll)
+                mark_as_advanced(MAGNUMEXTRAS_${_COMPONENT}_DLL_DEBUG
+                    MAGNUMEXTRAS_${_COMPONENT}_DLL_RELEASE)
+            # If not on Windows or on a static build, unset the DLL variables
+            # to avoid leaks when switching shared and static builds
+            else()
+                unset(MAGNUMEXTRAS_${_COMPONENT}_DLL_DEBUG CACHE)
+                unset(MAGNUMEXTRAS_${_COMPONENT}_DLL_RELEASE CACHE)
             endif()
 
         # Executables
         elseif(_component IN_LIST _MAGNUMEXTRAS_EXECUTABLE_COMPONENTS)
-            add_executable(MagnumExtras::${_component} IMPORTED)
-
             find_program(MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE magnum-${_component})
             mark_as_advanced(MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE)
-
-            if(MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE)
-                set_property(TARGET MagnumExtras::${_component} PROPERTY
-                    IMPORTED_LOCATION ${MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE})
-            endif()
 
         # Something unknown, skip. FPHSA will take care of handling this below.
         else()
             continue()
         endif()
 
-        # No special setup required for Ui library
-
-        # Find library includes
-        if(_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS)
-            find_path(_MAGNUMEXTRAS_${_COMPONENT}_INCLUDE_DIR
-                NAMES ${_component}.h
-                HINTS ${MAGNUMEXTRAS_INCLUDE_DIR}/Magnum/${_component})
-            mark_as_advanced(_MAGNUMEXTRAS_${_COMPONENT}_INCLUDE_DIR)
+        # Decide if the library was found. If not, skip the rest, which
+        # populates the target properties and finds additional dependencies.
+        # This means that the rest can also rely on that some FindXYZ.cmake is
+        # present in _MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR -- given that the
+        # library needing XYZ was found, it likely also installed FindXYZ for
+        # itself.
+        if(
+            # If the component is a library, it should have the configure file
+            (_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS AND _MAGNUMEXTRAS_${_COMPONENT}_CONFIGURE_FILE AND (
+                # And it should have a debug library, and a DLL found if
+                # expected
+                (MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_DEBUG AND (
+                    NOT DEFINED MAGNUMEXTRAS_${_COMPONENT}_DLL_DEBUG OR
+                    MAGNUMEXTRAS_${_COMPONENT}_DLL_DEBUG)) OR
+                # Or have a release library, and a DLL found if expected
+                (MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_RELEASE AND (
+                    NOT DEFINED MAGNUMEXTRAS_${_COMPONENT}_DLL_RELEASE OR
+                    MAGNUMEXTRAS_${_COMPONENT}_DLL_RELEASE)))) OR
+            # If the component is an executable, it should have just the
+            # location
+            (_component IN_LIST _MAGNUMEXTRAS_EXECUTABLE_COMPONENTS AND MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE)
+        )
+            set(MagnumExtras_${_component}_FOUND TRUE)
+        else()
+            set(MagnumExtras_${_component}_FOUND FALSE)
+            continue()
         endif()
 
-        # Link to core Magnum library, add inter-library dependencies
+        # Target and location for libraries
         if(_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS)
+            if(_MAGNUMEXTRAS_${_COMPONENT}_BUILD_STATIC)
+                add_library(MagnumExtras::${_component} STATIC IMPORTED)
+            else()
+                add_library(MagnumExtras::${_component} SHARED IMPORTED)
+            endif()
+
+            foreach(_CONFIG DEBUG RELEASE)
+                if(NOT MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_${_CONFIG})
+                    continue()
+                endif()
+
+                set_property(TARGET MagnumExtras::${_component} APPEND PROPERTY
+                    IMPORTED_CONFIGURATIONS ${_CONFIG})
+                # Unfortunately for a DLL the two properties are swapped out,
+                # *.lib goes to IMPLIB, so it's duplicated like this
+                if(DEFINED MAGNUMEXTRAS_${_COMPONENT}_DLL_${_CONFIG})
+                    # Quotes to "fix" KDE's higlighter
+                    set_target_properties("MagnumExtras::${_component}" PROPERTIES
+                        IMPORTED_LOCATION_${_CONFIG} ${MAGNUMEXTRAS_${_COMPONENT}_DLL_${_CONFIG}}
+                        IMPORTED_IMPLIB_${_CONFIG} ${MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_${_CONFIG}})
+                else()
+                    set_property(TARGET MagnumExtras::${_component} PROPERTY
+                        IMPORTED_LOCATION_${_CONFIG} ${MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_${_CONFIG}})
+                endif()
+            endforeach()
+
+        # Target and location for executable components
+        elseif(_component IN_LIST _MAGNUMEXTRAS_EXECUTABLE_COMPONENTS)
+            add_executable(MagnumExtras::${_component} IMPORTED)
+
+            set_property(TARGET MagnumExtras::${_component} PROPERTY
+                IMPORTED_LOCATION ${MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE})
+        endif()
+
+        # No special setup required for Ui library
+
+        if(_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS)
+            # Link to core Magnum library, add inter-library dependencies
             foreach(_dependency ${_MAGNUMEXTRAS_${_component}_CORRADE_DEPENDENCIES})
                 set_property(TARGET MagnumExtras::${_component} APPEND PROPERTY
                     INTERFACE_LINK_LIBRARIES Corrade::${_dependency})
@@ -203,13 +302,6 @@ foreach(_component ${MagnumExtras_FIND_COMPONENTS})
                 set_property(TARGET MagnumExtras::${_component} APPEND PROPERTY
                     INTERFACE_LINK_LIBRARIES MagnumExtras::${_dependency})
             endforeach()
-        endif()
-
-        # Decide if the library was found
-        if((_component IN_LIST _MAGNUMEXTRAS_LIBRARY_COMPONENTS AND _MAGNUMEXTRAS_${_COMPONENT}_INCLUDE_DIR AND (MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_DEBUG OR MAGNUMEXTRAS_${_COMPONENT}_LIBRARY_RELEASE)) OR (_component IN_LIST _MAGNUMEXTRAS_EXECUTABLE_COMPONENTS AND MAGNUMEXTRAS_${_COMPONENT}_EXECUTABLE))
-            set(MagnumExtras_${_component}_FOUND TRUE)
-        else()
-            set(MagnumExtras_${_component}_FOUND FALSE)
         endif()
     endif()
 endforeach()
@@ -245,6 +337,13 @@ if(NOT CMAKE_VERSION VERSION_LESS 3.16)
 
     string(REPLACE ";" " " _MAGNUMEXTRAS_REASON_FAILURE_MESSAGE "${_MAGNUMEXTRAS_REASON_FAILURE_MESSAGE}")
     set(_MAGNUMEXTRAS_REASON_FAILURE_MESSAGE REASON_FAILURE_MESSAGE "${_MAGNUMEXTRAS_REASON_FAILURE_MESSAGE}")
+endif()
+
+# Remove Magnum Extras dependency module dir from CMAKE_MODULE_PATH again. Do
+# it before the FPHSA call which may exit early in case of a failure.
+if(_MAGNUMEXTRAS_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH)
+    list(REMOVE_ITEM CMAKE_MODULE_PATH ${_MAGNUMEXTRAS_DEPENDENCY_MODULE_DIR})
+    unset(_MAGNUMEXTRAS_REMOVE_DEPENDENCY_MODULE_DIR_FROM_CMAKE_PATH)
 endif()
 
 include(FindPackageHandleStandardArgs)
